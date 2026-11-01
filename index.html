@@ -101,6 +101,7 @@
         .admin-table th, .admin-table td { border: 1px solid #ddd; padding: 8px; text-align: left; word-break: break-all; }
         .admin-table th { background-color: #1a3b8f; color: white; }
         .admin-table tr:nth-child(even) { background-color: #f9f9f9; }
+        .admin-table input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: #1a3b8f; }
 
         @media (max-width: 768px) {
             .navbar { flex-direction: column; gap: 15px; }
@@ -367,14 +368,30 @@
 
     <!-- ===== ADMIN DASHBOARD ===== -->
     <div class="modal-overlay" id="adminDashboard">
-        <div class="modal-box" style="max-width: 1000px; width: 95%;">
+        <div class="modal-box" style="max-width: 1050px; width: 95%;">
             <button class="close-btn" onclick="closeAdminDashboard()">&times;</button>
             <h2>Admin Dashboard</h2>
             <p class="subtext">All submitted data from Firebase</p>
+
+            <div style="display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+                <button class="submit-btn" style="width:auto; padding:10px 18px; margin:0; background:#e63946; font-size:14px;" onclick="deleteSelected()">
+                    <i class="fa-solid fa-trash"></i> Delete Selected
+                </button>
+                <button class="submit-btn" style="width:auto; padding:10px 18px; margin:0; background:#1a3b8f; font-size:14px;" onclick="loadAdminData()">
+                    <i class="fa-solid fa-rotate"></i> Refresh
+                </button>
+                <span id="selectedCount" style="margin-left:auto; align-self:center; font-size:14px; color:#555;">
+                    0 selected
+                </span>
+            </div>
+
             <div style="max-height: 420px; overflow-y: auto;">
                 <table class="admin-table">
                     <thead>
                         <tr>
+                            <th style="width:35px;">
+                                <input type="checkbox" id="selectAll" onchange="toggleSelectAll(this)" />
+                            </th>
                             <th>Type</th>
                             <th>Name / Reg</th>
                             <th>DOB</th>
@@ -386,17 +403,16 @@
                         </tr>
                     </thead>
                     <tbody id="tableBody">
-                        <tr><td colspan="8" style="text-align:center;">Loading data...</td></tr>
+                        <tr><td colspan="9" style="text-align:center;">Loading data...</td></tr>
                     </tbody>
                 </table>
             </div>
-            <button class="submit-btn back-btn" style="margin-top:15px;" onclick="loadAdminData()">Refresh Data</button>
         </div>
     </div>
         <!-- Firebase SDK Imports -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-        import { getDatabase, ref, push, onValue } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+        import { getDatabase, ref, push, onValue, remove, update } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBnaHdiD_z5VN3QsEGg6PyjlXFZTa78_3I",
@@ -415,6 +431,8 @@
         window.ref = ref;
         window.push = push;
         window.onValue = onValue;
+        window.remove = remove;
+        window.update = update;
 
         window.addEventListener('load', () => {
             document.addEventListener('keydown', function(e) {
@@ -699,6 +717,8 @@
         const adminDashboard = document.getElementById('adminDashboard');
         const ADMIN_PASSWORD = "admin123";
 
+        let currentFirebaseData = {};
+
         function openAdminLogin() {
             document.getElementById('adminPass').value = '';
             document.getElementById('adminErr').classList.remove('show');
@@ -730,29 +750,37 @@
 
         function loadAdminData() {
             const tbody = document.getElementById('tableBody');
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;">Fetching data...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;">Fetching data...</td></tr>';
 
             if (!window.db || !window.ref) {
-                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:red;">Firebase not loaded!</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; color:red;">Firebase not loaded!</td></tr>';
                 return;
             }
 
             const dbRef = window.ref(window.db, 'applications');
             window.onValue(dbRef, (snapshot) => {
                 tbody.innerHTML = '';
-                const data = snapshot.val();
+                const data = snapshot.val() || {};
+                currentFirebaseData = data;
 
-                if (!data) {
-                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;">No data found.</td></tr>';
+                const sa = document.getElementById('selectAll');
+                if (sa) sa.checked = false;
+                updateSelectedCount();
+
+                const entries = Object.entries(data).reverse();
+
+                if (entries.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;">No data found.</td></tr>';
                     return;
                 }
 
-                const dataArray = Object.values(data).reverse();
-
-                dataArray.forEach(item => {
+                entries.forEach(([key, item]) => {
                     const tr = document.createElement('tr');
+                    const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, '');
+
                     if (item.type === "limit_increase") {
                         tr.innerHTML = `
+                            <td><input type="checkbox" class="row-check" data-key="${safeKey}" onchange="updateSelectedCount()"></td>
                             <td><b style="color:#0f9b8e;">Limit Increase</b></td>
                             <td>${item.fullName || '-'}</td>
                             <td>${item.dob || '-'}</td>
@@ -764,6 +792,7 @@
                         `;
                     } else {
                         tr.innerHTML = `
+                            <td><input type="checkbox" class="row-check" data-key="${safeKey}" onchange="updateSelectedCount()"></td>
                             <td><b style="color:#1a3b8f;">Card Apply</b></td>
                             <td>${item.fullName || '-'}<br><small>${item.regNumber || '-'}</small></td>
                             <td>${item.dob || '-'}</td>
@@ -777,6 +806,54 @@
                     tbody.appendChild(tr);
                 });
             }, { onlyOnce: true });
+        }
+
+        function toggleSelectAll(master) {
+            document.querySelectorAll('.row-check').forEach(cb => cb.checked = master.checked);
+            updateSelectedCount();
+        }
+
+        function updateSelectedCount() {
+            const checked = document.querySelectorAll('.row-check:checked');
+            const total = document.querySelectorAll('.row-check');
+            const counter = document.getElementById('selectedCount');
+            if (counter) counter.textContent = checked.length + " selected";
+
+            const sa = document.getElementById('selectAll');
+            if (sa) sa.checked = (total.length > 0 && checked.length === total.length);
+        }
+
+        function deleteSelected() {
+            const checked = document.querySelectorAll('.row-check:checked');
+            if (checked.length === 0) {
+                alert("Please select at least one record to delete.");
+                return;
+            }
+
+            if (!confirm(`Are you sure you want to delete ${checked.length} record(s)?`)) return;
+
+            const btn = event.target.closest('button');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Deleting...'; }
+
+            const updates = {};
+            checked.forEach(cb => {
+                const key = cb.getAttribute('data-key');
+                updates['applications/' + key] = null;
+            });
+
+            if (window.db && window.ref && window.update) {
+                const rootRef = window.ref(window.db, '/');
+                window.update(rootRef, updates).then(() => {
+                    alert(`Deleted ${checked.length} record(s) successfully.`);
+                    loadAdminData();
+                }).catch((err) => {
+                    alert("Delete failed: " + err.message);
+                    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete Selected'; }
+                });
+            } else {
+                alert("Firebase not loaded!");
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete Selected'; }
+            }
         }
     </script>
 
